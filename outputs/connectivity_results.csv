@@ -1,0 +1,4 @@
+Source,Destination,Status,Road_Distance_m,Route_Node_Count
+"Uppal X Roads, Hyderabad, India","Ramanthapur, Hyderabad, India",CONNECTED,3134.25,30
+"Uppal Metro Station, Hyderabad, India","Habsiguda, Hyderabad, India",CONNECTED,4549.89,45
+"Boduppal, Hyderabad, India","Tarnaka, Hyderabad, India",CONNECTED,5212.88,90
