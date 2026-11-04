@@ -4,9 +4,19 @@ import math
 import osmnx as ox
 import pandas as pd
 
-GRAPH_PATH = "data/uppal_road_network.graphml"
-OUTPUT_PATH = "outputs/location_mapping.csv"
-MANUAL_LOCATIONS_PATH = "data/manual_locations.csv"
+# Project paths
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+GRAPH_PATH = os.path.join(
+    BASE_DIR, "data", "uppal_road_network.graphml"
+)
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+OUTPUT_PATH = os.path.join(
+    OUTPUT_DIR, "location_mapping.csv"
+)
+MANUAL_LOCATIONS_PATH = os.path.join(
+    BASE_DIR, "data", "manual_locations.csv"
+)
 
 SEARCH_RADIUS = 3000       # 3 km
 MAX_SNAP_DISTANCE = 250    # Maximum acceptable distance to a road
@@ -196,7 +206,7 @@ def map_locations():
     # Save results
     if results:
 
-        os.makedirs("outputs", exist_ok=True)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
 
         df = pd.DataFrame(results)
         df.to_csv(OUTPUT_PATH, index=False)
