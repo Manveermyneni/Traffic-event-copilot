@@ -64,6 +64,18 @@ st.title("Traffic Event Co-Pilot")
 st.caption("Uppal (Rajiv Gandhi International Cricket) Stadium, Hyderabad. Plans traffic for an event "
            "before it happens. Demo flow follows SIPOC: Suppliers, Inputs, Process, Outputs, Customers.")
 
+# Warning badges until real rows exist in data/manual_locations.csv
+badges = []
+if res.get("hospital_is_placeholder", True):
+    badges.append("Hospital is a placeholder")
+if res.get("parking_is_generated", True):
+    badges.append("Parking zones are generated")
+
+if badges:
+    badge_cols = st.columns(len(badges))
+    for col, badge_text in zip(badge_cols, badges):
+        col.warning(f"⚠️ {badge_text}")
+
 t1, t2, t3, t4, t5 = st.tabs(["1 · SIPOC overview", "2 · Suppliers → Inputs", "3 · Process",
                               "4 · Outputs", "5 · Customers"])
 
@@ -179,8 +191,9 @@ with t4:
         st.dataframe(dv, hide_index=True)
     c = res["corridor"]
     if c:
+        hosp_note = "Hospital point is a placeholder." if res.get("hospital_is_placeholder", True) else "Hospital point from manual_locations.csv."
         st.info(f"Protected emergency corridor: {c['length_m']:,} m. ETA {c['free_min']} min if kept clear, "
-                f"about {c['unprotected_min']} min if open to event traffic. Hospital point is a placeholder.")
+                f"about {c['unprotected_min']} min if open to event traffic. {hosp_note}")
     st.markdown("**What-if: shifting riders to metro**")
     if st.button("Run what-if comparison (0, 10, 20, 30%)"):
         rows = []

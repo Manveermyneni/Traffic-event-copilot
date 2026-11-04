@@ -106,3 +106,37 @@ def test_report_contains_only_computed_numbers_header_and_sections(network):
     rep = E.run_scenario(D, {"attendance": 39000, "event_name": "Test"})["report"]
     for h in ("Impact summary", "Bottlenecks", "Diversion scheme", "Emergency protection", "Data status"):
         assert h in rep
+
+
+@needs_graph
+def test_manual_locations_fallback_when_no_rows_exist(network, tmp_path, monkeypatch):
+    D, _ = network
+    empty_csv = tmp_path / "manual_locations.csv"
+    empty_csv.write_text("Location,Latitude,Longitude,Source,Verified\nUppal Metro Station,17.3987948,78.5538439,Wikipedia,True\n")
+    monkeypatch.setattr(E, "MANUAL_LOCATION_CSV", empty_csv)
+
+    r = E.run_scenario(D, {"attendance": 10000})
+    assert r["hospital_is_placeholder"] is True
+    assert r["parking_is_generated"] is True
+    assert r["params"]["hospital_latlon"] == E.FALLBACK_LOCATIONS["Habsiguda"]
+
+
+@needs_graph
+def test_manual_locations_used_when_hospital_and_parking_rows_exist(network, tmp_path, monkeypatch):
+    D, _ = network
+    custom_csv = tmp_path / "manual_locations.csv"
+    custom_csv.write_text(
+        "Location,Latitude,Longitude,Source,Verified,Type\n"
+        "TX Hospitals Uppal,17.4005,78.5570,TX Hospitals,True,hospital\n"
+        "Little Flower Junior College,17.4044,78.5577,OSM,True,parking\n"
+    )
+    monkeypatch.setattr(E, "MANUAL_LOCATION_CSV", custom_csv)
+
+    r = E.run_scenario(D, {"attendance": 10000})
+    assert r["hospital_is_placeholder"] is False
+    assert r["parking_is_generated"] is False
+    assert r["params"]["hospital_latlon"] == (17.4005, 78.5570)
+    expected_hospital_node = E.nearest_node(D, 17.4005, 78.5570)
+    assert r["corridor"]["path"][0] == expected_hospital_node
+    expected_parking_node = E.nearest_node(D, 17.4044, 78.5577)
+    assert r["parking"] == [expected_parking_node]
