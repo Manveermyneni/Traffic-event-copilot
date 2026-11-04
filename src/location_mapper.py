@@ -50,6 +50,10 @@ def find_manual_location(place, manual_df):
     place_clean = place.strip().lower()
     place_short = place_clean.split(",")[0].strip()
     for _, row in manual_df.iterrows():
+        lat_val = row.get("Latitude")
+        lon_val = row.get("Longitude")
+        if pd.isna(lat_val) or pd.isna(lon_val) or str(lat_val).strip() == "" or str(lon_val).strip() == "":
+            continue
         man_loc = str(row["Location"]).strip().lower()
         man_short = man_loc.split(",")[0].strip()
         if man_loc == place_clean or man_short == place_short or place_clean.startswith(man_short):

@@ -50,6 +50,24 @@ with st.sidebar.expander("Approach shares (ASSUMED)"):
     shares = {k: st.slider(k, 0, 50, int(v * 100)) for k, v in E.DEFAULT_APPROACH_SHARE.items()}
 run = st.sidebar.button("▶ Run Co-Pilot", type="primary")
 
+# Turn-back points missing coordinates (sidebar note)
+manual_df = E.load_manual_locations()
+if not manual_df.empty and "Type" in manual_df.columns:
+    tb_mask = manual_df["Type"].astype(str).str.strip().str.lower() == "turnback"
+    tb_rows = manual_df[tb_mask]
+    missing_tb = []
+    for _, r in tb_rows.iterrows():
+        lat = r.get("Latitude")
+        lon = r.get("Longitude")
+        if pd.isna(lat) or pd.isna(lon) or str(lat).strip() == "" or str(lon).strip() == "":
+            missing_tb.append(str(r.get("Location", "")).strip())
+    if missing_tb:
+        st.sidebar.markdown("---")
+        with st.sidebar.expander(f"⚠️ Turn-backs without coordinates ({len(missing_tb)})", expanded=True):
+            st.caption("These turn-back points lack coordinates and are skipped on the map until filled:")
+            for item in missing_tb:
+                st.write(f"• {item}")
+
 if run or "res" not in st.session_state:
     with st.spinner("Estimating demand, loading roads, finding hotspots..."):
         st.session_state["res"] = E.run_scenario(D, {

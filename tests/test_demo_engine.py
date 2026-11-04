@@ -140,3 +140,38 @@ def test_manual_locations_used_when_hospital_and_parking_rows_exist(network, tmp
     assert r["corridor"]["path"][0] == expected_hospital_node
     expected_parking_node = E.nearest_node(D, 17.4044, 78.5577)
     assert r["parking"] == [expected_parking_node]
+
+
+def test_turnback_rows_have_no_coordinates_and_unverified():
+    df = E.load_manual_locations()
+    assert not df.empty
+    assert "Type" in df.columns
+    tb = df[df["Type"].astype(str).str.strip().str.lower() == "turnback"]
+    assert len(tb) >= 4  # contains Nagole, Habsiguda, HMDA, Street No 8, etc.
+    # Coordinates must be empty
+    assert tb["Latitude"].isna().all()
+    assert tb["Longitude"].isna().all()
+    # Verified must be NO
+    assert (tb["Verified"].astype(str).str.strip().str.upper() == "NO").all()
+
+
+@needs_graph
+def test_map_view_draws_turnback_markers_when_coords_present_and_skips_when_empty(network, tmp_path, monkeypatch):
+    import map_view as M
+    D, _ = network
+    # Create test csv with one turnback having coordinates and one without
+    test_csv = tmp_path / "manual_locations.csv"
+    test_csv.write_text(
+        "Location,Latitude,Longitude,Source,Verified,Type\n"
+        "Nagole Metro Station U-turn,17.3900,78.5600,Diversions sheet,NO,turnback\n"
+        "Habsiguda X Roads,,,Diversions sheet,NO,turnback\n"
+    )
+    monkeypatch.setattr(E, "MANUAL_LOCATION_CSV", test_csv)
+
+    scenario_res = E.run_scenario(D, {"attendance": 10000})
+    folium_map = M.make_map(D, scenario_res)
+    # Convert map to HTML string to inspect elements
+    html = folium_map.get_root().render()
+    # Turn-back with coordinates (17.39, 78.56) should be rendered in HTML
+    assert "Nagole Metro Station U-turn" in html
+    assert "Police turn-back points" in html
