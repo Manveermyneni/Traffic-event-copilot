@@ -6,6 +6,7 @@ import pandas as pd
 
 GRAPH_PATH = "data/uppal_road_network.graphml"
 OUTPUT_PATH = "outputs/location_mapping.csv"
+MANUAL_LOCATIONS_PATH = "data/manual_locations.csv"
 
 SEARCH_RADIUS = 3000       # 3 km
 MAX_SNAP_DISTANCE = 250    # Maximum acceptable distance to a road
@@ -31,6 +32,21 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
     return 2 * R * math.asin(math.sqrt(a))
 
+
+def find_manual_location(place, manual_df):
+    """Check if place exists in manual locations."""
+    if manual_df is None or manual_df.empty:
+        return None
+    place_clean = place.strip().lower()
+    place_short = place_clean.split(",")[0].strip()
+    for _, row in manual_df.iterrows():
+        man_loc = str(row["Location"]).strip().lower()
+        man_short = man_loc.split(",")[0].strip()
+        if man_loc == place_clean or man_short == place_short or place_clean.startswith(man_short):
+            return row
+    return None
+
+
 def map_locations():
 
     print("\n========== HYDERABAD LOCATION MAPPING ==========")
@@ -45,6 +61,12 @@ def map_locations():
     print("Road network loaded successfully!")
     print("Total Nodes:", len(G.nodes))
     print("Total Edges:", len(G.edges))
+
+    # Load manual locations
+    manual_df = None
+    if os.path.exists(MANUAL_LOCATIONS_PATH):
+        manual_df = pd.read_csv(MANUAL_LOCATIONS_PATH)
+        print(f"Loaded {len(manual_df)} manual location(s) from {MANUAL_LOCATIONS_PATH}")
 
     # Reference location
     center_place = (
@@ -76,23 +98,33 @@ def map_locations():
 
         print("\nProcessing:", place)
 
-        lat, lon = None, None
-        geocode_error = None
-        for attempt in range(2):
-            try:
-                lat, lon = ox.geocode(place)
-                break
-            except Exception as e:
-                geocode_error = e
-                print(f"Geocoding attempt {attempt + 1} failed for '{place}': {type(e).__name__} - {e}")
-                if attempt == 0:
-                    print(f"Retrying geocoding for '{place}'...")
-                    time.sleep(2.0)
+        manual_row = find_manual_location(place, manual_df)
+        if manual_row is not None:
+            lat = float(manual_row["Latitude"])
+            lon = float(manual_row["Longitude"])
+            source = str(manual_row.get("Source", "Manual"))
+            verified = manual_row.get("Verified", True)
+            print(f"Using manual location for '{place}' (Source: {source}, Verified: {verified})")
+        else:
+            lat, lon = None, None
+            geocode_error = None
+            for attempt in range(2):
+                try:
+                    lat, lon = ox.geocode(place)
+                    break
+                except Exception as e:
+                    geocode_error = e
+                    print(f"Geocoding attempt {attempt + 1} failed for '{place}': {type(e).__name__} - {e}")
+                    if attempt == 0:
+                        print(f"Retrying geocoding for '{place}'...")
+                        time.sleep(2.0)
 
-        if lat is None or lon is None:
-            print(f"FAILED to geocode '{place}'. Reason: {type(geocode_error).__name__} - {geocode_error}")
-            time.sleep(1.2)
-            continue
+            if lat is None or lon is None:
+                print(f"FAILED to geocode '{place}'. Reason: {type(geocode_error).__name__} - {geocode_error}")
+                time.sleep(1.2)
+                continue
+
+            verified = "UNVERIFIED"
 
         try:
             # Distance from Uppal Stadium
@@ -134,7 +166,8 @@ def map_locations():
                 "Distance_From_Stadium_m": round(center_distance, 2),
                 "Nearest_Node": nearest_node,
                 "Road_Distance_m": round(road_distance, 2),
-                "Status": status
+                "Status": status,
+                "Verified": verified
             })
 
             print("Distance from Stadium:", round(center_distance, 2), "m")
@@ -160,7 +193,7 @@ def map_locations():
 
         print(df[
             ["Location", "Distance_From_Stadium_m",
-             "Road_Distance_m", "Status"]
+             "Road_Distance_m", "Status", "Verified"]
         ].to_string(index=False))
 
         print("\nTotal Locations:", len(df))
