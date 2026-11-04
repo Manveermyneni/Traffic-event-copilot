@@ -76,10 +76,25 @@ def map_locations():
 
         print("\nProcessing:", place)
 
-        try:
-            # Get geographical coordinates
-            lat, lon = ox.geocode(place)
+        lat, lon = None, None
+        geocode_error = None
+        for attempt in range(2):
+            try:
+                lat, lon = ox.geocode(place)
+                break
+            except Exception as e:
+                geocode_error = e
+                print(f"Geocoding attempt {attempt + 1} failed for '{place}': {type(e).__name__} - {e}")
+                if attempt == 0:
+                    print(f"Retrying geocoding for '{place}'...")
+                    time.sleep(2.0)
 
+        if lat is None or lon is None:
+            print(f"FAILED to geocode '{place}'. Reason: {type(geocode_error).__name__} - {geocode_error}")
+            time.sleep(1.2)
+            continue
+
+        try:
             # Distance from Uppal Stadium
             center_distance = calculate_distance(
                 center_lat, center_lon, lat, lon
@@ -128,7 +143,7 @@ def map_locations():
             print("Status:", status)
 
         except Exception as e:
-            print("Could not process location:", e)
+            print("Could not process location road mapping:", e)
 
         # Avoid sending geocoding requests too quickly
         time.sleep(1.2)
