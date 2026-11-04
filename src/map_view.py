@@ -1,7 +1,8 @@
 """Folium map for the demo: roads coloured by V/C, diversions, emergency corridor, zones."""
 import folium
+import pandas as pd
 
-from event_engine import STADIUM, UPPAL_METRO_VERIFIED, node_xy
+from event_engine import STADIUM, UPPAL_METRO_VERIFIED, node_xy, load_manual_locations
 
 ARTERIAL = {"tertiary", "secondary", "primary", "trunk", "motorway"}
 
@@ -55,6 +56,48 @@ def make_map(D, res, use_naive=False, show_zones=True):
                             tooltip=f"Diversion for {d['name']}: +{d['extra_m']} m, +{d['extra_s']} s").add_to(dv)
     dv.add_to(m)
 
+    # Turn-back points from data/manual_locations.csv
+    manual_df = load_manual_locations()
+    if not manual_df.empty and "Type" in manual_df.columns:
+        tb_mask = manual_df["Type"].astype(str).str.strip().str.lower() == "turnback"
+        tb_rows = manual_df[tb_mask]
+        tb_with_coords = []
+        for _, r in tb_rows.iterrows():
+            lat = r.get("Latitude")
+            lon = r.get("Longitude")
+            if pd.notna(lat) and pd.notna(lon) and str(lat).strip() != "" and str(lon).strip() != "":
+                try:
+                    tb_with_coords.append((float(lat), float(lon), str(r.get("Location", "")).strip()))
+                except (ValueError, TypeError):
+                    continue
+
+        if tb_with_coords:
+            tb_group = folium.FeatureGroup("Police turn-back points")
+            adv = res.get("advisory")
+            for lat, lon, loc_name in tb_with_coords:
+                adv_lines = []
+                if adv is not None and not adv.empty:
+                    for _, a in adv.iterrows():
+                        dp = str(a.get("Diversion_Point", "")).strip().lower()
+                        loc_lower = loc_name.lower()
+                        if dp and (dp in loc_lower or loc_lower in dp):
+                            adv_lines.append(
+                                f"<b>Movement:</b> {a.get('Movement', '')}<br>"
+                                f"<b>Divert at:</b> {a.get('Diversion_Point', '')}<br>"
+                                f"<b>Diverted route:</b> {a.get('Diverted_Route', '')}"
+                            )
+                if adv_lines:
+                    tip = f"<b>Turn-back: {loc_name}</b><br>" + "<hr style='margin:4px 0;'>".join(adv_lines)
+                else:
+                    tip = f"<b>Turn-back: {loc_name}</b><br><i>(No specific advisory recorded for this date)</i>"
+
+                folium.Marker(
+                    (lat, lon),
+                    tooltip=folium.Tooltip(tip),
+                    icon=folium.Icon(color="red", icon="ban", prefix="fa")
+                ).add_to(tb_group)
+            tb_group.add_to(m)
+
     pts = folium.FeatureGroup("Approaches and zones")
     for name, a in res["approaches"].items():
         folium.CircleMarker(a["latlon"], radius=7, color="#1f4e9c", fill=True, fill_opacity=.9,
@@ -78,6 +121,7 @@ def make_map(D, res, use_naive=False, show_zones=True):
     <span style="color:#d62728">&#9632;</span> over 1.0 congested<br>
     <span style="color:#6a0dad">&#9473;&#9473;</span> emergency corridor<br>
     <span style="color:#1f77b4">&#9473;&#9473;</span> diversion<br>
+    <span style="color:red">&#9679;</span> turn-back point<br>
     <i>Model estimate, not measured counts</i></div>"""
     m.get_root().html.add_child(folium.Element(legend))
     return m
