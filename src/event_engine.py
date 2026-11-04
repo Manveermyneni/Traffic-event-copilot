@@ -26,6 +26,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 GRAPH_PATH = BASE_DIR / "data" / "uppal_road_network.graphml"
 DATA_FILE = BASE_DIR / "data" / "uppal_stadium_event_traffic_data_pack.xlsx"
 LOCATION_CSV = BASE_DIR / "outputs" / "location_mapping.csv"
+MANUAL_LOCATION_CSV = BASE_DIR / "data" / "manual_locations.csv"
 
 STADIUM = (17.4065, 78.5505)  # same centre point used in osm_network.py
 # SOURCE: Wikipedia coordinates of Uppal metro station. The geocoder result stored in
@@ -478,19 +479,95 @@ def event_options(pack):
     return out
 
 
+def load_manual_locations(path=None) -> pd.DataFrame:
+    """Read data/manual_locations.csv if present, returning empty DataFrame otherwise."""
+    p = MANUAL_LOCATION_CSV if path is None else Path(path)
+    if p.exists():
+        try:
+            return pd.read_csv(p)
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
+
+
+def get_manual_hospital_and_parking(manual_df: pd.DataFrame | None = None) -> tuple[tuple[float, float] | None, list[tuple[float, float]] | None]:
+    """Extract first hospital coordinate and all parking coordinates from manual locations.
+    Returns (hospital_latlon, parking_latlons). Either may be None if not found."""
+    if manual_df is None:
+        manual_df = load_manual_locations()
+    if manual_df.empty:
+        return None, None
+
+    cols = {str(c).strip().lower(): c for c in manual_df.columns}
+    if "type" not in cols or "latitude" not in cols or "longitude" not in cols:
+        return None, None
+
+    type_col = cols["type"]
+    lat_col = cols["latitude"]
+    lon_col = cols["longitude"]
+
+    # Filter hospital rows (case-insensitive)
+    h_mask = manual_df[type_col].astype(str).str.strip().str.lower() == "hospital"
+    h_df = manual_df[h_mask]
+    hospital_latlon = None
+    if not h_df.empty:
+        try:
+            hospital_latlon = (float(h_df.iloc[0][lat_col]), float(h_df.iloc[0][lon_col]))
+        except (ValueError, TypeError):
+            hospital_latlon = None
+
+    # Filter parking rows (case-insensitive)
+    p_mask = manual_df[type_col].astype(str).str.strip().str.lower() == "parking"
+    p_df = manual_df[p_mask]
+    parking_latlons = []
+    for _, r in p_df.iterrows():
+        try:
+            parking_latlons.append((float(r[lat_col]), float(r[lon_col])))
+        except (ValueError, TypeError):
+            continue
+
+    return hospital_latlon, (parking_latlons if parking_latlons else None)
+
+
 def run_scenario(D, params, pack=None):
     """params: attendance, start_time, phase, mode_share, approach_share, shift_pct, iterations,
     hospital_latlon (optional), event_date (optional)."""
     P = {"attendance": 39000, "start_time": "19:30", "phase": "ingress", "duration_h": 3.0,
          "mode_share": None, "approach_share": None, "shift_pct": 0.0, "iterations": 6,
-         "hospital_latlon": FALLBACK_LOCATIONS["Habsiguda"], "event_date": None, "event_name": "Custom event"}
+         "hospital_latlon": None, "event_date": None, "event_name": "Custom event"}
     P.update(params)
     stadium = nearest_node(D, *STADIUM)
-    parking = pick_parking_nodes(D, stadium)
+
+    # Read data/manual_locations.csv for hospital and parking zones
+    manual_hosp, manual_parking = get_manual_hospital_and_parking()
+
+    # Destination zones: rows with Type = parking, else generated zones
+    if manual_parking:
+        parking_nodes = [nearest_node(D, lat, lon) for lat, lon in manual_parking]
+        parking = list(dict.fromkeys(parking_nodes))
+        parking_is_generated = False
+    else:
+        parking = pick_parking_nodes(D, stadium)  # ASSUMED generated parking zones
+        parking_is_generated = True
+
+    # Emergency corridor start: rows with Type = hospital, else placeholder
+    if P.get("hospital_latlon") is not None:
+        hospital_latlon = P["hospital_latlon"]
+        hospital_is_placeholder = False
+    elif manual_hosp is not None:
+        hospital_latlon = manual_hosp
+        hospital_is_placeholder = False
+    else:
+        hospital_latlon = FALLBACK_LOCATIONS["Habsiguda"]  # ASSUMED placeholder hospital
+        hospital_is_placeholder = True
+    P["hospital_latlon"] = hospital_latlon
+
     approaches = load_approaches(D, P["approach_share"])
     dem = compute_demand(P["attendance"], P["mode_share"], P["start_time"], P["phase"], P["duration_h"], P["shift_pct"])
 
-    corridor = emergency_corridor(D, nearest_node(D, *P["hospital_latlon"]), stadium)
+    corridor = emergency_corridor(D, nearest_node(D, *hospital_latlon), stadium)
+    if corridor:
+        corridor["is_placeholder"] = hospital_is_placeholder
     protected = frozenset(corridor["edges"]) if corridor else frozenset()
 
     R = Router(D)
@@ -518,7 +595,8 @@ def run_scenario(D, params, pack=None):
     res = {"params": P, "demand": dem, "stadium": stadium, "parking": parking, "approaches": approaches,
            "naive": naive, "opt": opt, "table_naive": t_naive, "table_opt": t_opt,
            "sum_naive": s_naive, "sum_opt": s_opt, "history": hist, "times": times,
-           "diversions": divs, "corridor": corridor, "advisory": advis, "hotspots": hot}
+           "diversions": divs, "corridor": corridor, "advisory": advis, "hotspots": hot,
+           "hospital_is_placeholder": hospital_is_placeholder, "parking_is_generated": parking_is_generated}
     res["report"] = build_report(D, res)
     return res
 
@@ -555,8 +633,9 @@ def build_report(D, r):
     L.append("\n## 4. Emergency protection")
     c = r["corridor"]
     if c:
+        hosp_note = "hospital location is a placeholder" if r.get("hospital_is_placeholder", True) else "hospital location verified from manual_locations.csv"
         L.append(f"- Protected ambulance corridor: {c['length_m']:,} m. ETA {c['free_min']} min with the corridor kept clear, "
-                 f"about {c['unprotected_min']} min if it is left open to event traffic (hospital location is a placeholder).")
+                 f"about {c['unprotected_min']} min if it is left open to event traffic ({hosp_note}).")
     L.append("\n## 5. Approach travel times to destination zones near the stadium (empty vs event peak)")
     for n, t in r["times"].items():
         L.append(f"- {n}: {t['free_min']} min -> {t['peak_min']} min")
