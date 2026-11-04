@@ -89,7 +89,9 @@ def map_locations():
         "Habsiguda, Hyderabad, India",
         "Boduppal, Hyderabad, India",
         "Tarnaka, Hyderabad, India",
-        "Ghatkesar, Telangana, India"
+        "Ghatkesar, Telangana, India",
+        "Stadium Metro Station",
+        "NGRI Metro Station"
     ]
 
     results = []
@@ -131,6 +133,15 @@ def map_locations():
             center_distance = calculate_distance(
                 center_lat, center_lon, lat, lon
             )
+
+            # Check candidate metro stations distance to stadium centre
+            stadium_candidates = ["Stadium Metro Station", "NGRI Metro Station"]
+            if any(cand in place for cand in stadium_candidates):
+                if center_distance > 600:
+                    verified = "UNVERIFIED"
+                    print(f"WARNING: Geocoded location for '{place}' is {center_distance:.2f} m from stadium centre (> 600 m). Marked UNVERIFIED.")
+                else:
+                    verified = "VERIFIED"
 
             # Find nearest road network node
             nearest_node = ox.distance.nearest_nodes(
@@ -174,6 +185,7 @@ def map_locations():
             print("Nearest Node:", nearest_node)
             print("Distance to Road:", round(road_distance, 2), "m")
             print("Status:", status)
+            print("Verified:", verified)
 
         except Exception as e:
             print("Could not process location road mapping:", e)
