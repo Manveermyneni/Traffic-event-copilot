@@ -25,6 +25,40 @@ def get_pack():
     return E.load_pack()
 
 
+@st.cache_data(show_spinner="Evaluating scenario presets...")
+def get_preset_comparison(_D, pack=None):
+    presets = [
+        {
+            "Preset": "IPL weeknight 19:30 ingress",
+            "params": {"attendance": 39000, "start_time": "19:30", "phase": "ingress", "duration_h": 3.0, "shift_pct": 0.0, "event_name": "IPL Weeknight"}
+        },
+        {
+            "Preset": "IPL weekend 15:30 ingress",
+            "params": {"attendance": 39000, "start_time": "15:30", "phase": "ingress", "duration_h": 3.0, "shift_pct": 0.0, "event_name": "IPL Weekend"}
+        },
+        {
+            "Preset": "Same weekend match egress",
+            "params": {"attendance": 39000, "start_time": "15:30", "phase": "egress", "duration_h": 3.0, "shift_pct": 0.0, "event_name": "IPL Weekend Egress"}
+        },
+        {
+            "Preset": "20% metro shift",
+            "params": {"attendance": 39000, "start_time": "19:30", "phase": "ingress", "duration_h": 3.0, "shift_pct": 20.0, "event_name": "20% Metro Shift"}
+        },
+    ]
+
+    rows = []
+    for p in presets:
+        res_p = E.run_scenario(_D, p["params"], pack)
+        rows.append({
+            "Scenario Preset": p["Preset"],
+            "Vehicles": f"{res_p['demand']['total_vehicles']:,}",
+            "Peak PCU/hour": f"{round(res_p['demand']['peak_hourly_pcu']):,}",
+            "Max V/C": f"{res_p['sum_opt']['max_vc']:.2f}",
+            "Roads over capacity": res_p["sum_opt"]["congested"],
+        })
+    return pd.DataFrame(rows)
+
+
 try:
     D, NET = get_network()
 except Exception as exc:  # readable error, no stack trace for the mentor
@@ -48,6 +82,7 @@ private = st.sidebar.slider("Share arriving by own/hired vehicle (%)", 20, 90, 6
 shift = st.sidebar.slider("What-if: move this % of 2-wheeler and car riders to metro", 0, 40, 0)
 with st.sidebar.expander("Approach shares (ASSUMED)"):
     shares = {k: st.slider(k, 0, 50, int(v * 100)) for k, v in E.DEFAULT_APPROACH_SHARE.items()}
+demo_mode = st.sidebar.checkbox("Demo mode", value=False, help="Show SIPOC letter and guidance caption under each tab")
 run = st.sidebar.button("▶ Run Co-Pilot", type="primary")
 
 # Turn-back points missing coordinates (sidebar note)
@@ -82,6 +117,13 @@ st.title("Traffic Event Co-Pilot")
 st.caption("Uppal (Rajiv Gandhi International Cricket) Stadium, Hyderabad. Plans traffic for an event "
            "before it happens. Demo flow follows SIPOC: Suppliers, Inputs, Process, Outputs, Customers.")
 
+# Data status strip
+st.markdown("### Data status")
+ds1, ds2, ds3 = st.columns(3)
+ds1.success("**REAL** (OSM, advisories)")
+ds2.warning("**ASSUMED** (parameters)")
+ds3.error("**MISSING** (event-day counts)")
+
 # Warning badges until real rows exist in data/manual_locations.csv
 badges = []
 if res.get("hospital_is_placeholder", True):
@@ -99,6 +141,8 @@ t1, t2, t3, t4, t5 = st.tabs(["1 · SIPOC overview", "2 · Suppliers → Inputs"
 
 # ------------------------------------------------------------------ 1. SIPOC
 with t1:
+    if demo_mode:
+        st.caption("ℹ️ **SIPOC Overview (S, I, P, O, C):** Look at the complete system map and how real OSM network and police advisories balance with assumed parameters.")
     st.subheader("SIPOC of the Traffic Event Co-Pilot")
     sipoc = pd.DataFrame({
         "S: Suppliers": ["OpenStreetMap (road network)", "Traffic police advisories (Rachakonda / Malkajgiri)",
@@ -126,6 +170,8 @@ with t1:
 
 # ------------------------------------------------------------------ 2. Suppliers -> Inputs
 with t2:
+    if demo_mode:
+        st.caption("ℹ️ **S & I (Suppliers & Inputs):** Look at the selected event details, OSM network data quality, and the travel mode split.")
     st.subheader("Suppliers → Inputs")
     a, b = st.columns(2)
     with a:
@@ -158,6 +204,8 @@ with t2:
 
 # ------------------------------------------------------------------ 3. Process
 with t3:
+    if demo_mode:
+        st.caption("ℹ️ **P (Process):** Look at the 15-minute arrival PCU profile and how successive averaging reallocates traffic across roads.")
     st.subheader("Process: what the Co-Pilot does, step by step")
     st.markdown("**Step 1-2. Data and road graph**")
     st.write(f"{NET['nodes']:,} junctions, {NET['edges']:,} road segments, road types: {NET['road_types']}")
@@ -183,6 +231,8 @@ with t3:
 
 # ------------------------------------------------------------------ 4. Outputs
 with t4:
+    if demo_mode:
+        st.caption("ℹ️ **O (Outputs):** Look at critical congestion bottlenecks, diversion paths with detour penalties, and preset scenario comparisons.")
     st.subheader("Outputs")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Vehicles", f"{dem['total_vehicles']:,}")
@@ -222,8 +272,15 @@ with t4:
                          "Roads over capacity": r2["sum_opt"]["congested"]})
         st.dataframe(pd.DataFrame(rows), hide_index=True)
 
+    st.markdown("**Scenario Preset Comparison**")
+    st.caption("Side-by-side comparison across 4 standard event presets (attendance ASSUMED: 39,000).")
+    comp_df = get_preset_comparison(D, PACK)
+    st.dataframe(comp_df, hide_index=True)
+
 # ------------------------------------------------------------------ 5. Customers
 with t5:
+    if demo_mode:
+        st.caption("ℹ️ **C (Customers):** Look at tailored deliverables for traffic police, event organizers, ambulances, and commuter advisories.")
     st.subheader("Customers: who gets what")
     top = hs.head(3)["street"].tolist() if len(hs) else []
     cols = st.columns(2)
