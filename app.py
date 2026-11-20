@@ -11,6 +11,8 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 import event_engine as E  # noqa: E402
 from map_view import make_map  # noqa: E402
+import venue_catalog as VC  # noqa: E402
+import police_chatbot as PC  # noqa: E402
 
 st.set_page_config(page_title="Traffic Event Co-Pilot", page_icon="🚦", layout="wide")
 
@@ -69,10 +71,36 @@ EVENTS = E.event_options(PACK)
 
 # ------------------------------------------------------------------ sidebar
 st.sidebar.title("🚦 Event setup")
+
+# Hyderabad Venue / Location Selection
+venues_df = VC.load_venues()
+venue_list = venues_df["Venue_Name"].tolist() if not venues_df.empty else ["Rajiv Gandhi International Cricket Stadium"]
+venue_options = venue_list + ["Custom Location in Hyderabad"]
+selected_venue_label = st.sidebar.selectbox("Venue / Area (Greater Hyderabad)", venue_options, index=0)
+
+venue_coords = None
+venue_info = None
+if selected_venue_label == "Custom Location in Hyderabad":
+    custom_area = st.sidebar.text_input("Area / Landmark name", "Charminar")
+    c_lat = st.sidebar.number_input("Latitude", value=17.3616, format="%.6f")
+    c_lon = st.sidebar.number_input("Longitude", value=78.4747, format="%.6f")
+    venue_coords = (float(c_lat), float(c_lon))
+    st.sidebar.caption("Police Custom Sector (Hyderabad)")
+    default_capacity = 25000
+else:
+    matches = venues_df[venues_df["Venue_Name"] == selected_venue_label]
+    if not matches.empty:
+        venue_info = matches.iloc[0].to_dict()
+        venue_coords = (float(venue_info["Latitude"]), float(venue_info["Longitude"]))
+        default_capacity = int(venue_info.get("Capacity", 39000))
+        st.sidebar.caption(f"Jurisdiction: {venue_info.get('Commissionerate', 'Hyderabad')} | Area: {venue_info.get('Area', '')}")
+    else:
+        default_capacity = 39000
+
 labels = [e["label"] for e in EVENTS] + ["Custom event"]
 choice = st.sidebar.selectbox("Event (from police advisories)", labels, index=min(5, len(labels) - 1))
 ev = next((e for e in EVENTS if e["label"] == choice), None)
-attendance = st.sidebar.number_input("Attendance (ASSUMED: stadium holds about 39,000)", 1000, 80000, 39000, 1000)
+attendance = st.sidebar.number_input(f"Attendance (ASSUMED: venue capacity ~{default_capacity:,})", 1000, 100000, default_capacity, 1000)
 start_time = st.sidebar.text_input("Start time (HH:MM)", ev["start"] if ev else "19:30")
 if ev and not ev["start_known"]:
     st.sidebar.caption("Start time was not confirmed in the sources, so 19:30 is an assumption.")
@@ -109,12 +137,15 @@ if run or "res" not in st.session_state:
             "attendance": int(attendance), "start_time": start_time, "phase": phase,
             "mode_share": E.mode_share_with_private_total(private / 100),
             "approach_share": {k: v / 100 for k, v in shares.items()}, "shift_pct": float(shift),
-            "event_date": ev["date"] if ev else None, "event_name": ev["name"] if ev else "Custom event"}, PACK)
+            "event_date": ev["date"] if ev else None,
+            "event_name": ev["name"] if ev else f"Event at {selected_venue_label}",
+            "venue_latlon": venue_coords,
+            "venue_name": selected_venue_label}, PACK)
 res = st.session_state["res"]
 dem, so, sn = res["demand"], res["sum_opt"], res["sum_naive"]
 
-st.title("Traffic Event Co-Pilot")
-st.caption("Uppal (Rajiv Gandhi International Cricket) Stadium, Hyderabad. Plans traffic for an event "
+st.title("Traffic Event Co-Pilot (Greater Hyderabad)")
+st.caption(f"Area: {selected_venue_label}. Plans traffic for an event "
            "before it happens. Demo flow follows SIPOC: Suppliers, Inputs, Process, Outputs, Customers.")
 
 # Data status strip
@@ -136,8 +167,8 @@ if badges:
     for col, badge_text in zip(badge_cols, badges):
         col.warning(f"⚠️ {badge_text}")
 
-t1, t2, t3, t4, t5 = st.tabs(["1 · SIPOC overview", "2 · Suppliers → Inputs", "3 · Process",
-                              "4 · Outputs", "5 · Customers"])
+t1, t2, t3, t4, t5, t6 = st.tabs(["1 · SIPOC overview", "2 · Suppliers → Inputs", "3 · Process",
+                                  "4 · Outputs", "5 · Customers", "6 · 💬 Police Copilot Chatbot"])
 
 # ------------------------------------------------------------------ 1. SIPOC
 with t1:
@@ -303,3 +334,41 @@ with t5:
     d1, d2 = st.columns(2)
     d1.download_button("Download plan (Markdown)", res["report"], "event_traffic_plan.md")
     d2.download_button("Download hotspots (CSV)", res["table_opt"].to_csv(index=False), "hotspots.csv")
+
+# ------------------------------------------------------------------ 6. Police Copilot Chatbot
+with t6:
+    st.subheader("💬 Police Copilot Chatbot")
+    st.caption("Ask operational questions regarding the traffic plan, bottlenecks [H], diversions [D], green corridors [E], and personnel deployment.")
+
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = [
+            {"role": "assistant", "content": f"Hello, Officer. I have prepared the traffic operation plan for **{res['params']['event_name']}**. How can I help you understand the plan, manage bottlenecks, or position your personnel?"}
+        ]
+
+    # Quick prompt buttons
+    st.markdown("**Quick Inquiries:**")
+    qc1, qc2, qc3, qc4 = st.columns(4)
+    quick_q = None
+    if qc1.button("🚨 Critical Bottlenecks"):
+        quick_q = "What are the critical bottlenecks?"
+    if qc2.button("🔀 Diversion Directives"):
+        quick_q = "Explain the diversion scheme"
+    if qc3.button("🚑 Emergency Corridor"):
+        quick_q = "What is the emergency corridor route and ETA?"
+    if qc4.button("👮 Police Deployment"):
+        quick_q = "What is the recommended police personnel deployment?"
+
+    for msg in st.session_state["chat_history"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    user_query = st.chat_input("Ask a question about this traffic plan...") or quick_q
+    if user_query:
+        st.session_state["chat_history"].append({"role": "user", "content": user_query})
+        with st.chat_message("user"):
+            st.markdown(user_query)
+
+        ans = PC.generate_police_response(user_query, res)
+        st.session_state["chat_history"].append({"role": "assistant", "content": ans})
+        with st.chat_message("assistant"):
+            st.markdown(ans)
