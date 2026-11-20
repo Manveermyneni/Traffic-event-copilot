@@ -72,38 +72,47 @@ EVENTS = E.event_options(PACK)
 # ------------------------------------------------------------------ sidebar
 st.sidebar.title("🚦 Event setup")
 
-# Hyderabad Venue / Location Selection
-venues_df = VC.load_venues()
-venue_list = venues_df["Venue_Name"].tolist() if not venues_df.empty else ["Rajiv Gandhi International Cricket Stadium"]
-venue_options = venue_list + ["Custom Location in Hyderabad"]
-selected_venue_label = st.sidebar.selectbox("Venue / Area (Greater Hyderabad)", venue_options, index=0)
+# Location Auto-Suggest (like Google suggestions)
+hyderabad_suggestions = VC.get_hyderabad_location_suggestions()
+suggestion_keys = list(hyderabad_suggestions.keys())
+location_choices = suggestion_keys + ["+ Custom Address / Coordinates in Hyderabad"]
+
+selected_loc = st.sidebar.selectbox(
+    "Location / Venue in Hyderabad (type to search)",
+    location_choices,
+    index=0,
+    help="Type to search locations across Greater Hyderabad (stadiums, junctions, IT corridors, and areas)"
+)
 
 venue_coords = None
 venue_info = None
-if selected_venue_label == "Custom Location in Hyderabad":
-    custom_area = st.sidebar.text_input("Area / Landmark name", "Charminar")
+if selected_loc == "+ Custom Address / Coordinates in Hyderabad":
+    custom_area = st.sidebar.text_input("Area or Landmark name", "Charminar, Hyderabad")
     c_lat = st.sidebar.number_input("Latitude", value=17.3616, format="%.6f")
     c_lon = st.sidebar.number_input("Longitude", value=78.4747, format="%.6f")
     venue_coords = (float(c_lat), float(c_lon))
-    st.sidebar.caption("Police Custom Sector (Hyderabad)")
+    st.sidebar.caption("Custom Sector Checkpoint")
     default_capacity = 25000
+    selected_loc_name = custom_area
 else:
-    matches = venues_df[venues_df["Venue_Name"] == selected_venue_label]
-    if not matches.empty:
-        venue_info = matches.iloc[0].to_dict()
-        venue_coords = (float(venue_info["Latitude"]), float(venue_info["Longitude"]))
-        default_capacity = int(venue_info.get("Capacity", 39000))
-        st.sidebar.caption(f"Jurisdiction: {venue_info.get('Commissionerate', 'Hyderabad')} | Area: {venue_info.get('Area', '')}")
-    else:
-        default_capacity = 39000
+    venue_info = hyderabad_suggestions[selected_loc]
+    venue_coords = (venue_info["lat"], venue_info["lon"])
+    default_capacity = venue_info["capacity"]
+    st.sidebar.caption(f"Jurisdiction: **{venue_info['commissionerate']}** | Area: {venue_info['area']}")
+    selected_loc_name = selected_loc
 
-labels = [e["label"] for e in EVENTS] + ["Custom event"]
-choice = st.sidebar.selectbox("Event (from police advisories)", labels, index=min(5, len(labels) - 1))
-ev = next((e for e in EVENTS if e["label"] == choice), None)
-attendance = st.sidebar.number_input(f"Attendance (ASSUMED: venue capacity ~{default_capacity:,})", 1000, 100000, default_capacity, 1000)
-start_time = st.sidebar.text_input("Start time (HH:MM)", ev["start"] if ev else "19:30")
-if ev and not ev["start_known"]:
-    st.sidebar.caption("Start time was not confirmed in the sources, so 19:30 is an assumption.")
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📋 Event Details")
+event_name = st.sidebar.text_input("Event Name / Description", value="SRH IPL Match 2026")
+event_type = st.sidebar.selectbox(
+    "Event Category",
+    ["Cricket / Sports Match", "Concert / Music Show", "Political Rally / Gathering",
+     "Exhibition / Trade Fair", "Marathon / Festival", "VIP Movement / Conference"],
+    index=0
+)
+event_date = st.sidebar.date_input("Event Date", value=pd.to_datetime("2026-04-15").date())
+start_time = st.sidebar.text_input("Start time (HH:MM)", "19:30")
+attendance = st.sidebar.number_input(f"Expected Attendance / Crowd (ASSUMED capacity ~{default_capacity:,})", 1000, 150000, default_capacity, 1000)
 phase = st.sidebar.radio("Phase", ["ingress", "egress"], horizontal=True,
                          help="ingress = people arriving before the event, egress = leaving after it")
 private = st.sidebar.slider("Share arriving by own/hired vehicle (%)", 20, 90, 60)
@@ -137,16 +146,58 @@ if run or "res" not in st.session_state:
             "attendance": int(attendance), "start_time": start_time, "phase": phase,
             "mode_share": E.mode_share_with_private_total(private / 100),
             "approach_share": {k: v / 100 for k, v in shares.items()}, "shift_pct": float(shift),
-            "event_date": ev["date"] if ev else None,
-            "event_name": ev["name"] if ev else f"Event at {selected_venue_label}",
+            "event_date": event_date,
+            "event_name": event_name,
             "venue_latlon": venue_coords,
-            "venue_name": selected_venue_label}, PACK)
+            "venue_name": selected_loc_name,
+            "event_type": event_type}, PACK)
 res = st.session_state["res"]
 dem, so, sn = res["demand"], res["sum_opt"], res["sum_naive"]
 
-st.title("Traffic Event Co-Pilot (Greater Hyderabad)")
-st.caption(f"Area: {selected_venue_label}. Plans traffic for an event "
-           "before it happens. Demo flow follows SIPOC: Suppliers, Inputs, Process, Outputs, Customers.")
+# Top Header with Top-Right AI Chat Popover (as per UI specification)
+head_col, ai_col = st.columns([0.76, 0.24])
+with head_col:
+    st.title("Traffic Event Co-Pilot (Greater Hyderabad)")
+    st.caption(f"Area: **{selected_loc_name}** | Event: **{event_name}** ({event_type}) | Plans traffic before the event happens.")
+with ai_col:
+    st.write("")
+    chat_popover = st.popover("✨ AI Chat", use_container_width=True)
+    with chat_popover:
+        st.markdown("### ✨ AI Chat")
+        st.caption("Ask questions regarding the generated traffic plan, bottlenecks, diversions, emergency corridors, and police deployment.")
+
+        if "chat_history" not in st.session_state:
+            st.session_state["chat_history"] = [
+                {"role": "assistant", "content": f"Hello, Officer. I have prepared the traffic operation plan for **{res['params']['event_name']}**. How can I help you understand the plan, manage bottlenecks, or position your personnel?"}
+            ]
+
+        # Quick prompt buttons
+        q_btn_cols = st.columns(2)
+        quick_query_top = None
+        if q_btn_cols[0].button("🚨 Bottlenecks", key="q1_top"):
+            quick_query_top = "What are the critical bottlenecks?"
+        if q_btn_cols[1].button("🔀 Diversions", key="q2_top"):
+            quick_query_top = "Explain the diversion scheme"
+        if q_btn_cols[0].button("🚑 Ambulance ETA", key="q3_top"):
+            quick_query_top = "What is the emergency corridor route and ETA?"
+        if q_btn_cols[1].button("👮 Deployment", key="q4_top"):
+            quick_query_top = "What is the recommended police personnel deployment?"
+
+        for msg in st.session_state["chat_history"]:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        with st.form("top_chat_form", clear_on_submit=True):
+            f_cols = st.columns([0.80, 0.20])
+            user_text_top = f_cols[0].text_input("Ask your copilot anything...", placeholder="Ask about bottlenecks, diversions, ETA...", label_visibility="collapsed")
+            send_btn = f_cols[1].form_submit_button("➤")
+
+        active_top_q = quick_query_top or (user_text_top if send_btn and user_text_top.strip() else None)
+        if active_top_q:
+            st.session_state["chat_history"].append({"role": "user", "content": active_top_q})
+            ans_top = PC.generate_police_response(active_top_q, res)
+            st.session_state["chat_history"].append({"role": "assistant", "content": ans_top})
+            st.rerun()
 
 # Data status strip
 st.markdown("### Data status")
@@ -168,7 +219,7 @@ if badges:
         col.warning(f"⚠️ {badge_text}")
 
 t1, t2, t3, t4, t5, t6 = st.tabs(["1 · SIPOC overview", "2 · Suppliers → Inputs", "3 · Process",
-                                  "4 · Outputs", "5 · Customers", "6 · 💬 Police Copilot Chatbot"])
+                                  "4 · Outputs", "5 · 📋 Operational Plan & Customers", "6 · 💬 Police Copilot Chatbot"])
 
 # ------------------------------------------------------------------ 1. SIPOC
 with t1:
@@ -210,8 +261,7 @@ with t2:
         st.write({"Event": res["params"]["event_name"], "Date": str(res["params"]["event_date"] or "custom"),
                   "Start": res["params"]["start_time"], "Phase": res["params"]["phase"],
                   "Attendance": f"{res['params']['attendance']:,}"})
-        if ev:
-            st.caption(f"Source: {ev['source']}")
+        st.caption(f"Category: {event_type} | Operational Phase: {phase.title()}")
         st.markdown("**Data pack (Excel)**")
         st.write({k: f"{len(v)} rows" for k, v in PACK.items()} if PACK else "Data pack not found")
     with b:
@@ -308,16 +358,40 @@ with t4:
     comp_df = get_preset_comparison(D, PACK)
     st.dataframe(comp_df, hide_index=True)
 
-# ------------------------------------------------------------------ 5. Customers
+# ------------------------------------------------------------------ 5. Operational Plan & Customers
 with t5:
     if demo_mode:
         st.caption("ℹ️ **C (Customers):** Look at tailored deliverables for traffic police, event organizers, ambulances, and commuter advisories.")
-    st.subheader("Customers: who gets what")
+    
+    st.markdown(f"### 📋 Special Traffic Operation Plan: {res['params']['event_name']}")
+    st.caption(f"Authority: Hyderabad Traffic Police | Sector: {selected_loc_name} | Operational Phase: {res['params']['phase'].title()}")
+
+    # Quick Download Buttons at the top
+    d1, d2, d3 = st.columns(3)
+    d1.download_button("📥 Download Plan (.MD)", res["report"], f"traffic_plan_{res['params']['event_name']}.md", key="dl_md_top")
+    d1_txt = res["report"].replace("#", "").replace("**", "")
+    d2.download_button("📥 Download Plan (.TXT)", d1_txt, f"traffic_plan_{res['params']['event_name']}.txt", key="dl_txt_top")
+    d3.download_button("📥 Download Hotspots (.CSV)", res["table_opt"].to_csv(index=False), "hotspots.csv", key="dl_csv_top")
+
+    # Key Tactical Numbers Banner
+    km1, km2, km3, km4 = st.columns(4)
+    km1.metric("Expected Crowd", f"{res['params']['attendance']:,}")
+    km2.metric("Total Vehicles", f"{dem['total_vehicles']:,}")
+    km3.metric("Peak Rush", f"{dem['peak_hourly_pcu']:,.0f} PCU/h")
+    c_eta = f"{res['corridor']['free_min']} min" if res['corridor'] else "N/A"
+    km4.metric("Green Corridor ETA [E-1]", c_eta)
+
+    st.markdown("---")
+    # Complete text-based detailed plan for the police to read
+    st.markdown(res["report"])
+
+    st.markdown("---")
+    st.subheader("Stakeholder Deliverables (Customers)")
     top = hs.head(3)["street"].tolist() if len(hs) else []
     cols = st.columns(2)
     with cols[0]:
         st.markdown("##### Traffic police planners")
-        st.write("Full plan with hotspots, diversions and emergency corridor (below, downloadable).")
+        st.write("Full plan with hotspots, diversions and emergency corridor (above, downloadable).")
         st.markdown("##### Event organiser")
         st.write(f"Plan for about {dem['buses']} event buses and {dem['metro_riders']:,.0f} metro riders. "
                  f"{dem['pedestrians']:,.0f} people arrive on foot, so gate queues and metro exits need crowd control.")
@@ -326,14 +400,9 @@ with t5:
         c = res["corridor"]
         st.write(f"Keep the purple corridor clear ({c['length_m']:,} m, {c['free_min']} min)." if c else "No corridor computed.")
         st.markdown("##### Commuters (draft public message)")
-        msg = (f"Heavy traffic expected around Uppal from midday. Avoid {', '.join(top) if top else 'the stadium roads'}. "
-               "Use Metro (Blue Line: Stadium, Uppal or NGRI stations) or TGSRTC special buses.")
+        msg = (f"Heavy traffic expected around {selected_loc_name} from {res['params']['start_time']}. Avoid {', '.join(top) if top else 'the venue roads'}. "
+               "Use Metro or TGSRTC special buses.")
         st.code(msg, language=None)
-    st.markdown("---")
-    st.markdown(res["report"])
-    d1, d2 = st.columns(2)
-    d1.download_button("Download plan (Markdown)", res["report"], "event_traffic_plan.md")
-    d2.download_button("Download hotspots (CSV)", res["table_opt"].to_csv(index=False), "hotspots.csv")
 
 # ------------------------------------------------------------------ 6. Police Copilot Chatbot
 with t6:

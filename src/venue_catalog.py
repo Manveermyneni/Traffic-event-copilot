@@ -1,6 +1,7 @@
 """
 Venue and Hospital Catalog for Greater Hyderabad.
 Manages verified locations, coordinates, hospital corridors, and road network retrieval.
+Includes extensive auto-suggest locations across Hyderabad (stadiums, junctions, IT hubs, and areas).
 """
 from __future__ import annotations
 
@@ -15,6 +16,213 @@ NETWORKS_DIR = DATA_DIR / "networks"
 VENUES_CSV = DATA_DIR / "hyderabad_venues.csv"
 HOSPITALS_CSV = DATA_DIR / "hyderabad_hospitals.csv"
 UPPAL_GRAPHML = DATA_DIR / "uppal_road_network.graphml"
+
+# Verified prominent Hyderabad hubs, stadiums, junctions and areas for auto-suggest
+HYDERABAD_SUGGESTIONS = {
+    "Rajiv Gandhi International Cricket Stadium, Uppal": {
+        "key": "uppal_stadium",
+        "lat": 17.406500,
+        "lon": 78.550500,
+        "commissionerate": "Rachakonda Police",
+        "area": "Uppal",
+        "capacity": 39000,
+        "default_hospital": "Gandhi Hospital"
+    },
+    "Gachibowli Stadium": {
+        "key": "gachibowli_stadium",
+        "lat": 17.449409,
+        "lon": 78.348468,
+        "commissionerate": "Cyberabad Police",
+        "area": "Gachibowli",
+        "capacity": 30000,
+        "default_hospital": "Continental Hospitals Gachibowli"
+    },
+    "Lal Bahadur Shastri Stadium (LB Stadium), Basheerbagh": {
+        "key": "lb_stadium",
+        "lat": 17.399565,
+        "lon": 78.472999,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Basheerbagh",
+        "capacity": 25000,
+        "default_hospital": "Osmania General Hospital"
+    },
+    "HITEX Exhibition Centre, Madhapur": {
+        "key": "hitex_centre",
+        "lat": 17.470811,
+        "lon": 78.374915,
+        "commissionerate": "Cyberabad Police",
+        "area": "Madhapur/Kondapur",
+        "capacity": 20000,
+        "default_hospital": "Continental Hospitals Gachibowli"
+    },
+    "Shilpakala Vedika, Madhapur": {
+        "key": "shilpakala_vedika",
+        "lat": 17.451408,
+        "lon": 78.379375,
+        "commissionerate": "Cyberabad Police",
+        "area": "Madhapur",
+        "capacity": 5000,
+        "default_hospital": "Continental Hospitals Gachibowli"
+    },
+    "Parade Ground, Secunderabad": {
+        "key": "parade_ground",
+        "lat": 17.445061,
+        "lon": 78.493566,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Secunderabad",
+        "capacity": 60000,
+        "default_hospital": "Gandhi Hospital"
+    },
+    "NTR Marg / Tank Bund / People's Plaza": {
+        "key": "tank_bund",
+        "lat": 17.415412,
+        "lon": 78.479628,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Khairatabad/Tank Bund",
+        "capacity": 50000,
+        "default_hospital": "Osmania General Hospital"
+    },
+    "Charminar, Old City": {
+        "key": "charminar",
+        "lat": 17.361564,
+        "lon": 78.474665,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Old City",
+        "capacity": 20000,
+        "default_hospital": "Osmania General Hospital"
+    },
+    "Cyber Towers / Hitec City": {
+        "key": "hitec_city",
+        "lat": 17.450410,
+        "lon": 78.380840,
+        "commissionerate": "Cyberabad Police",
+        "area": "Hitec City",
+        "capacity": 25000,
+        "default_hospital": "Continental Hospitals Gachibowli"
+    },
+    "Banjara Hills (Road No 1 & 12)": {
+        "key": "banjara_hills",
+        "lat": 17.415582,
+        "lon": 78.448255,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Banjara Hills",
+        "capacity": 15000,
+        "default_hospital": "Care Hospital Banjara Hills"
+    },
+    "Jubilee Hills Checkpost": {
+        "key": "jubilee_hills",
+        "lat": 17.430030,
+        "lon": 78.409380,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Jubilee Hills",
+        "capacity": 15000,
+        "default_hospital": "Apollo Hospitals Jubilee Hills"
+    },
+    "Financial District / Nanakramguda": {
+        "key": "financial_district",
+        "lat": 17.417200,
+        "lon": 78.341100,
+        "commissionerate": "Cyberabad Police",
+        "area": "Gachibowli/Nanakramguda",
+        "capacity": 20000,
+        "default_hospital": "Continental Hospitals Gachibowli"
+    },
+    "Secunderabad Railway Station / Station Road": {
+        "key": "secunderabad_station",
+        "lat": 17.434390,
+        "lon": 78.501570,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Secunderabad",
+        "capacity": 30000,
+        "default_hospital": "Gandhi Hospital"
+    },
+    "Mehdipatnam X Roads": {
+        "key": "mehdipatnam",
+        "lat": 17.391620,
+        "lon": 78.438530,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Mehdipatnam",
+        "capacity": 20000,
+        "default_hospital": "Care Hospital Banjara Hills"
+    },
+    "Kukatpally / KPHB Colony": {
+        "key": "kukatpally",
+        "lat": 17.493250,
+        "lon": 78.399430,
+        "commissionerate": "Cyberabad Police",
+        "area": "Kukatpally",
+        "capacity": 25000,
+        "default_hospital": "Apollo Hospitals Jubilee Hills"
+    },
+    "Dilsukhnagar Bus Depot / X Roads": {
+        "key": "dilsukhnagar",
+        "lat": 17.368810,
+        "lon": 78.524730,
+        "commissionerate": "Rachakonda Police",
+        "area": "Dilsukhnagar",
+        "capacity": 25000,
+        "default_hospital": "Yashoda Hospitals Malakpet"
+    },
+    "LB Nagar Ring Road / Junction": {
+        "key": "lb_nagar",
+        "lat": 17.345720,
+        "lon": 78.552230,
+        "commissionerate": "Rachakonda Police",
+        "area": "LB Nagar",
+        "capacity": 30000,
+        "default_hospital": "Yashoda Hospitals Malakpet"
+    },
+    "Panjagutta X Roads": {
+        "key": "panjagutta",
+        "lat": 17.426210,
+        "lon": 78.452650,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Panjagutta",
+        "capacity": 20000,
+        "default_hospital": "Care Hospital Banjara Hills"
+    },
+    "Ameerpet X Roads": {
+        "key": "ameerpet",
+        "lat": 17.437460,
+        "lon": 78.448290,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Ameerpet",
+        "capacity": 20000,
+        "default_hospital": "Care Hospital Banjara Hills"
+    },
+    "Habsiguda X Roads": {
+        "key": "habsiguda",
+        "lat": 17.415476,
+        "lon": 78.542692,
+        "commissionerate": "Rachakonda Police",
+        "area": "Habsiguda",
+        "capacity": 20000,
+        "default_hospital": "Gandhi Hospital"
+    },
+    "Tarnaka X Roads": {
+        "key": "tarnaka",
+        "lat": 17.428548,
+        "lon": 78.537943,
+        "commissionerate": "Hyderabad City Police",
+        "area": "Tarnaka",
+        "capacity": 20000,
+        "default_hospital": "Gandhi Hospital"
+    },
+    "Uppal X Roads": {
+        "key": "uppal",
+        "lat": 17.400772,
+        "lon": 78.560495,
+        "commissionerate": "Rachakonda Police",
+        "area": "Uppal",
+        "capacity": 25000,
+        "default_hospital": "Gandhi Hospital"
+    }
+}
+
+
+def get_hyderabad_location_suggestions() -> dict[str, dict[str, Any]]:
+    """Return verified prominent Hyderabad locations for auto-suggestions."""
+    return dict(HYDERABAD_SUGGESTIONS)
 
 
 def load_venues() -> pd.DataFrame:
@@ -38,6 +246,20 @@ def load_hospitals() -> pd.DataFrame:
 
 def get_venue(venue_key: str) -> dict[str, Any] | None:
     """Get venue record by key."""
+    # Check in suggestions dict first
+    for name, data in HYDERABAD_SUGGESTIONS.items():
+        if data.get("key") == venue_key:
+            return {
+                "Venue_Key": venue_key,
+                "Venue_Name": name,
+                "Commissionerate": data["commissionerate"],
+                "Area": data["area"],
+                "Latitude": data["lat"],
+                "Longitude": data["lon"],
+                "Capacity": data["capacity"],
+                "Default_Hospital": data["default_hospital"]
+            }
+
     df = load_venues()
     if df.empty:
         return None
@@ -97,7 +319,7 @@ def get_road_network_path(venue_key: str, lat: float | None = None, lon: float |
     If not yet cached, attempts download via OSMnx; if offline/fails, falls back to UPPAL_GRAPHML.
     """
     NETWORKS_DIR.mkdir(parents=True, exist_ok=True)
-    if venue_key == "uppal_stadium" and UPPAL_GRAPHML.exists():
+    if (venue_key in ("uppal_stadium", "uppal") or venue_key.startswith("uppal")) and UPPAL_GRAPHML.exists():
         return UPPAL_GRAPHML
 
     cached_file = NETWORKS_DIR / f"{venue_key}.graphml"
@@ -117,4 +339,3 @@ def get_road_network_path(venue_key: str, lat: float | None = None, lon: float |
 
     # Fallback to default Uppal road network
     return UPPAL_GRAPHML
-

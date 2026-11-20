@@ -47,3 +47,14 @@ def test_get_venue_and_hospital_lookup():
     assert h is not None
     assert "Secunderabad" in h["Zone"]
 
+
+def test_hyderabad_location_suggestions():
+    suggestions = VC.get_hyderabad_location_suggestions()
+    assert isinstance(suggestions, dict)
+    assert len(suggestions) >= 20
+    for name, loc in suggestions.items():
+        assert "lat" in loc and "lon" in loc
+        assert "commissionerate" in loc
+        assert 17.0 < loc["lat"] < 18.0
+        assert 78.0 < loc["lon"] < 79.0
+
