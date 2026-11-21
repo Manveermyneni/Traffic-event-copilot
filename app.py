@@ -13,13 +13,15 @@ import event_engine as E  # noqa: E402
 from map_view import make_map  # noqa: E402
 import venue_catalog as VC  # noqa: E402
 import police_chatbot as PC  # noqa: E402
+import traffic_profiles as TP  # noqa: E402
 
 st.set_page_config(page_title="Traffic Event Co-Pilot", page_icon="🚦", layout="wide")
 
 
-@st.cache_resource(show_spinner="Loading Uppal road network...")
-def get_network():
-    return E.build_network()
+@st.cache_resource(show_spinner="Loading road network for area...")
+def get_network(network_path_str: str | None = None):
+    p = Path(network_path_str) if network_path_str else E.GRAPH_PATH
+    return E.build_network(p)
 
 
 @st.cache_data(show_spinner=False)
@@ -61,11 +63,6 @@ def get_preset_comparison(_D, pack=None):
     return pd.DataFrame(rows)
 
 
-try:
-    D, NET = get_network()
-except Exception as exc:  # readable error, no stack trace for the mentor
-    st.error(f"Could not load the road network ({exc}). Check that data/uppal_road_network.graphml exists.")
-    st.stop()
 PACK = get_pack()
 EVENTS = E.event_options(PACK)
 
@@ -94,12 +91,21 @@ if selected_loc == "+ Custom Address / Coordinates in Hyderabad":
     st.sidebar.caption("Custom Sector Checkpoint")
     default_capacity = 25000
     selected_loc_name = custom_area
+    venue_key = f"custom_{abs(int(c_lat*100))}_{abs(int(c_lon*100))}"
 else:
     venue_info = hyderabad_suggestions[selected_loc]
     venue_coords = (venue_info["lat"], venue_info["lon"])
     default_capacity = venue_info["capacity"]
+    venue_key = venue_info.get("key", "uppal_stadium")
     st.sidebar.caption(f"Jurisdiction: **{venue_info['commissionerate']}** | Area: {venue_info['area']}")
     selected_loc_name = selected_loc
+
+# Load the road network for the selected location (dynamic network support)
+net_path = VC.get_road_network_path(venue_key, venue_coords[0], venue_coords[1])
+try:
+    D, NET = get_network(str(net_path))
+except Exception:
+    D, NET = get_network(str(E.GRAPH_PATH))
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📋 Event Details")
@@ -282,6 +288,33 @@ with t2:
     st.markdown("**Mode split used (share of people)**")
     ms = pd.DataFrame({"mode": list(dem["mode_share"]), "share_%": [round(v * 100, 1) for v in dem["mode_share"].values()]})
     st.bar_chart(ms.set_index("mode"))
+
+    st.markdown("---")
+    st.markdown("### 📊 24-Hour & 7-Day Baseline Traffic Patterns (HMDA CTS & IRC:106 Data)")
+    st.caption("Average hourly traffic volume and classified vehicle mix passing through this road category on each day of the week.")
+
+    day_name = pd.to_datetime(event_date).day_name()
+    ev_hour = int(start_time.split(":")[0]) if ":" in start_time else 19
+    c_day1, c_day2 = st.columns(2)
+    with c_day1:
+        st.markdown(f"**24-Hour Diurnal Traffic Curve ({day_name})**")
+        curve_df = TP.get_diurnal_24h_curve(day_of_week=day_name, road_category="Primary_Arterial")
+        if not curve_df.empty:
+            st.line_chart(curve_df.set_index("Time_Window")[["Total_Vehicles", "Total_PCU"]])
+    with c_day2:
+        st.markdown(f"**Classified Vehicle Mix during Event Hour ({start_time[:2]}:00)**")
+        slice_data = TP.get_hourly_slice(day_of_week=day_name, hour=ev_hour, road_category="Primary_Arterial")
+        if slice_data:
+            mix_df = pd.DataFrame({
+                "Vehicle Class": ["2-Wheelers", "Cars", "Autos", "Buses", "Trucks/LCVs"],
+                "Count": [slice_data["Two_Wheeler_Count"], slice_data["Car_Count"], slice_data["Auto_Rickshaw_Count"], slice_data["Bus_Count"], slice_data["LCV_Truck_Count"]]
+            })
+            st.bar_chart(mix_df.set_index("Vehicle Class"))
+
+    st.markdown(f"**7-Day Traffic Volume Comparison at {start_time[:2]}:00 (Vehicles passing through corridor)**")
+    week_df = TP.get_weekly_comparison(hour=ev_hour, road_category="Primary_Arterial")
+    if not week_df.empty:
+        st.dataframe(week_df, hide_index=True)
 
 # ------------------------------------------------------------------ 3. Process
 with t3:
