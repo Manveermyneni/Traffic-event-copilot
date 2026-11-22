@@ -14,6 +14,7 @@ from map_view import make_map  # noqa: E402
 import venue_catalog as VC  # noqa: E402
 import police_chatbot as PC  # noqa: E402
 import traffic_profiles as TP  # noqa: E402
+import osm_download as OD  # noqa: E402
 
 st.set_page_config(page_title="Traffic Event Co-Pilot", page_icon="🚦", layout="wide")
 
@@ -30,7 +31,7 @@ def get_pack():
 
 
 @st.cache_data(show_spinner="Evaluating scenario presets...")
-def get_preset_comparison(_D, pack=None):
+def get_preset_comparison(_D, venue_key, venue_latlon, hospital_latlon, pack=None):
     presets = [
         {
             "Preset": "IPL weeknight 19:30 ingress",
@@ -52,7 +53,7 @@ def get_preset_comparison(_D, pack=None):
 
     rows = []
     for p in presets:
-        res_p = E.run_scenario(_D, p["params"], pack)
+        res_p = E.run_scenario(_D, {**p["params"], "venue_latlon": venue_latlon, "hospital_latlon": hospital_latlon}, pack)
         rows.append({
             "Scenario Preset": p["Preset"],
             "Vehicles": f"{res_p['demand']['total_vehicles']:,}",
@@ -100,12 +101,14 @@ else:
     st.sidebar.caption(f"Jurisdiction: **{venue_info['commissionerate']}** | Area: {venue_info['area']}")
     selected_loc_name = selected_loc
 
-# Load the road network for the selected location (dynamic network support)
-net_path = VC.get_road_network_path(venue_key, venue_coords[0], venue_coords[1])
-try:
-    D, NET = get_network(str(net_path))
-except Exception:
-    D, NET = get_network(str(E.GRAPH_PATH))
+# Nearest known hospital for the emergency corridor (never an invented one)
+_hosp = VC.nearest_hospital(venue_coords[0], venue_coords[1])
+hospital_latlon = (float(_hosp["Latitude"]), float(_hosp["Longitude"])) if _hosp else None
+if _hosp:
+    st.sidebar.caption(f"Emergency corridor hospital: **{_hosp['Hospital_Name']}** ({_hosp['Distance_km']} km away)")
+else:
+    st.sidebar.warning("No hospital within 12 km in data/hyderabad_hospitals.csv, so the emergency corridor is skipped. "
+                       "Add one, or run scripts/prepare_city_data.py --hospitals.")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📋 Event Details")
@@ -146,25 +149,72 @@ if not manual_df.empty and "Type" in manual_df.columns:
             for item in missing_tb:
                 st.write(f"• {item}")
 
-if run or "res" not in st.session_state:
-    with st.spinner("Estimating demand, loading roads, finding hotspots..."):
-        st.session_state["res"] = E.run_scenario(D, {
-            "attendance": int(attendance), "start_time": start_time, "phase": phase,
-            "mode_share": E.mode_share_with_private_total(private / 100),
-            "approach_share": {k: v / 100 for k, v in shares.items()}, "shift_pct": float(shift),
-            "event_date": event_date,
-            "event_name": event_name,
-            "venue_latlon": venue_coords,
-            "venue_name": selected_loc_name,
-            "event_type": event_type}, PACK)
+_params = {
+    "attendance": int(attendance), "start_time": start_time, "phase": phase,
+    "mode_share": E.mode_share_with_private_total(private / 100),
+    "approach_share": {k: v / 100 for k, v in shares.items()}, "shift_pct": float(shift),
+    "event_date": event_date,
+    "event_name": event_name,
+    "venue_latlon": venue_coords,
+    "hospital_latlon": hospital_latlon,
+    "venue_name": selected_loc_name,
+    "event_type": event_type,
+}
+
+# Parameter signature: only recompute when Run Co-Pilot is explicitly clicked or on initial load
+_sig = repr((venue_key, tuple(venue_coords), sorted((k, str(v)) for k, v in _params.items())))
+
+_force = st.session_state.pop("force_retry", False)
+is_initial = "res" not in st.session_state
+should_run = run or is_initial or _force
+
+if should_run:
+    try:
+        net_path = VC.get_road_network_path(venue_key, venue_coords[0], venue_coords[1], force_retry=_force)
+        D, NET = get_network(str(net_path))
+        st.session_state["active_D"] = D
+        st.session_state["active_NET"] = NET
+        st.session_state["active_venue_key"] = venue_key
+        st.session_state["active_loc_name"] = selected_loc_name
+        st.session_state["active_event_name"] = event_name
+        st.session_state["active_event_type"] = event_type
+        with st.spinner(f"Computing tactical traffic plan for {selected_loc_name}..."):
+            st.session_state["res"] = E.run_scenario(D, _params, PACK)
+            st.session_state["active_sig"] = _sig
+    except OD.NetworkUnavailable as exc:
+        st.title("Traffic Event Co-Pilot (Greater Hyderabad)")
+        st.error(f"Road map for **{selected_loc_name}** is not available yet, so no plan was made "
+                 f"(a plan on the wrong roads would be misleading).\n\n{exc}")
+        st.markdown("**How to fix (no API key needed):**\n"
+                    "1. Connect to another network (mobile hotspot or VPN) and click **Retry** below.\n"
+                    "2. Or run once: `py scripts/prepare_city_data.py` on any working network. It saves road maps for every venue.\n"
+                    "3. Find out why: `py scripts/diagnose_network.py`.\n"
+                    "4. Browser works but Python does not? Export the area from openstreetmap.org/export and run `py scripts/import_osm_file.py` (instructions at the top of that file).")
+        if st.button("🔄 Retry download"):
+            st.session_state["force_retry"] = True
+            st.rerun()
+        st.stop()
+    except Exception as exc:
+        st.error(f"Could not load the road network for {selected_loc_name}: {exc}")
+        st.stop()
+
 res = st.session_state["res"]
+D = st.session_state["active_D"]
+NET = st.session_state["active_NET"]
+active_loc_name = st.session_state.get("active_loc_name", selected_loc_name)
+active_event_name = st.session_state.get("active_event_name", event_name)
+active_event_type = st.session_state.get("active_event_type", event_type)
 dem, so, sn = res["demand"], res["sum_opt"], res["sum_naive"]
+
+inputs_changed = (_sig != st.session_state.get("active_sig"))
+if inputs_changed:
+    st.sidebar.warning("⚠️ **Pending input changes.**\nClick **▶ Run Co-Pilot** above to apply.")
 
 # Top Header with Top-Right AI Chat Popover (as per UI specification)
 head_col, ai_col = st.columns([0.76, 0.24])
 with head_col:
     st.title("Traffic Event Co-Pilot (Greater Hyderabad)")
-    st.caption(f"Area: **{selected_loc_name}** | Event: **{event_name}** ({event_type}) | Plans traffic before the event happens.")
+    st.caption(f"Area: **{active_loc_name}** | Event: **{active_event_name}** ({active_event_type}) | Plans traffic before the event happens.")
 with ai_col:
     st.write("")
     chat_popover = st.popover("✨ AI Chat", use_container_width=True)
@@ -211,6 +261,9 @@ ds1, ds2, ds3 = st.columns(3)
 ds1.success("**REAL** (OSM, advisories)")
 ds2.warning("**ASSUMED** (parameters)")
 ds3.error("**MISSING** (event-day counts)")
+
+if inputs_changed:
+    st.info(f"💡 **Pending input changes:** You selected **{selected_loc_name}** ({event_name}). The results below display the active plan. Click **'▶ Run Co-Pilot'** in the sidebar to compute and apply the new plan.")
 
 # Warning badges until real rows exist in data/manual_locations.csv
 badges = []
@@ -290,8 +343,8 @@ with t2:
     st.bar_chart(ms.set_index("mode"))
 
     st.markdown("---")
-    st.markdown("### 📊 24-Hour & 7-Day Baseline Traffic Patterns (HMDA CTS & IRC:106 Data)")
-    st.caption("Average hourly traffic volume and classified vehicle mix passing through this road category on each day of the week.")
+    st.markdown("### 📊 Typical-day traffic pattern (ASSUMED shape, synthetic, NOT measured counts)")
+    st.caption("These curves are a hand-made planning shape. Real hourly counts per road are not public for Hyderabad. Real published counts (older studies) are listed below. Replace with police/ITMS counts when you get them.")
 
     day_name = pd.to_datetime(event_date).day_name()
     ev_hour = int(start_time.split(":")[0]) if ":" in start_time else 19
@@ -315,6 +368,10 @@ with t2:
     week_df = TP.get_weekly_comparison(hour=ev_hour, road_category="Primary_Arterial")
     if not week_df.empty:
         st.dataframe(week_df, hide_index=True)
+    _anch = TP.load_real_anchors()
+    if not _anch.empty:
+        st.markdown("**Real published counts (older studies, a few locations only)**")
+        st.dataframe(_anch[["Location", "Count", "Unit", "Year", "Source"]], hide_index=True)
 
 # ------------------------------------------------------------------ 3. Process
 with t3:
@@ -388,7 +445,7 @@ with t4:
 
     st.markdown("**Scenario Preset Comparison**")
     st.caption("Side-by-side comparison across 4 standard event presets (attendance ASSUMED: 39,000).")
-    comp_df = get_preset_comparison(D, PACK)
+    comp_df = get_preset_comparison(D, venue_key, tuple(venue_coords), hospital_latlon, PACK)
     st.dataframe(comp_df, hide_index=True)
 
 # ------------------------------------------------------------------ 5. Operational Plan & Customers
