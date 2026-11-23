@@ -114,3 +114,59 @@ def test_apptest_run_copilot_button_gate():
     assert not any("Pending input changes" in w for w in sidebar_warnings_after)
 
 
+def test_apptest_chatbot_event_name_sync():
+    """Verify chatbot greeting and plan sync to new event name when Run Co-Pilot is clicked."""
+    at = AppTest.from_file(APP_PATH, default_timeout=300)
+    at.run()
+    assert not at.exception
+
+    # Initially chatbot has SRH IPL Match 2026
+    chat_hist = at.session_state.get("chat_history", [])
+    assert any("SRH IPL Match 2026" in msg.get("content", "") for msg in chat_hist)
+
+    # Change event name to 'mahabhrat show' and click Run Co-Pilot
+    name_inputs = [t for t in at.sidebar.text_input if "Event Name" in t.label or "ఈవెంట్ పేరు" in t.label]
+    assert len(name_inputs) == 1
+    name_inputs[0].set_value("mahabhrat show")
+
+    run_buttons = [b for b in at.sidebar.button if "Run Co-Pilot" in b.label]
+    assert len(run_buttons) == 1
+    run_buttons[0].click().run()
+    assert not at.exception
+
+    # Chatbot history should now greet with mahabhrat show
+    chat_hist_after = at.session_state.get("chat_history", [])
+    assert any("mahabhrat show" in msg.get("content", "") for msg in chat_hist_after)
+    assert not any("SRH IPL Match 2026" in msg.get("content", "") for msg in chat_hist_after)
+
+
+def test_apptest_language_switch_to_telugu():
+    """Verify bilingual language switch from English to Telugu updates titles and controls."""
+    at = AppTest.from_file(APP_PATH, default_timeout=300)
+    at.run()
+    assert not at.exception
+
+    # Locate language radio button on top left corner
+    lang_radios = [r for r in at.sidebar.radio if "Language" in r.label or "భాష" in r.label]
+    assert len(lang_radios) == 1
+    lang_radio = lang_radios[0]
+    assert lang_radio.value == "English"
+
+    # Switch to Telugu and re-run
+    lang_radio.set_value("తెలుగు").run()
+    assert not at.exception
+
+    # Check title is in Telugu
+    titles = [t.value for t in at.title]
+    assert any("ట్రాఫిక్ ఈవెంట్ కో-పైలట్" in t for t in titles)
+
+    # Check report in Tab 5 is in Telugu and has no raw English section headers
+    markdown_texts = [m.value for m in at.markdown]
+    assert any("ట్రాఫిక్ కార్యాచరణ మరియు బందోబస్తు ప్రణాళిక" in m for m in markdown_texts)
+    assert not any("## 1. Impact summary" in m for m in markdown_texts)
+
+    # Check chatbot greeting in session state switched to Telugu
+    chat_hist = at.session_state.get("chat_history", [])
+    assert any("నమస్కారం, ఆఫీసర్" in msg.get("content", "") for msg in chat_hist)
+
+

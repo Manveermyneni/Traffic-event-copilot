@@ -187,6 +187,50 @@ def entry_nodes(D, latlon, n=4, radius_m=700):
     return cand or [nearest_node(D, *latlon)]
 
 
+ARTERIAL_RANK = {"trunk": 4, "primary": 3, "secondary": 2, "tertiary": 1}
+COMPASS = ["North", "North-East", "East", "South-East", "South", "South-West", "West", "North-West"]
+
+
+def auto_approaches(D, venue_latlon, n_sectors=8, n_entry=3, min_frac=0.55):
+    """Approaches for ANY venue, taken from the real road map.
+    Entry points are junctions on main roads (tertiary or higher) in the outer part of the graph.
+    The share of traffic per direction is proportional to the capacity of the main roads there
+    (ASSUMED proxy: wider roads bring more vehicles). Police can override shares in the app."""
+    dist = {n: haversine(venue_latlon, node_xy(D, n)) for n in D.nodes}
+    R = max(dist.values()) if dist else 0
+    sectors = {}
+    for n, dn in dist.items():
+        if dn < min_frac * R:
+            continue
+        w, names = 0.0, []
+        for v in D.successors(n):
+            e = D[n][v]
+            if e["road_type"] in ARTERIAL_RANK:
+                w += e["cap"]
+                if e["name"]:
+                    names.append(e["name"])
+        if w <= 0:
+            continue
+        la, lo = node_xy(D, n)
+        brg = (math.degrees(math.atan2((lo - venue_latlon[1]) * math.cos(math.radians(venue_latlon[0])),
+                                       la - venue_latlon[0])) + 360) % 360
+        sec = int(((brg + 180 / n_sectors) % 360) // (360 / n_sectors))
+        sectors.setdefault(sec, []).append((w, n, names))
+    out, total = {}, sum(sum(x[0] for x in v) for v in sectors.values())
+    for sec, items in sorted(sectors.items()):
+        items.sort(key=lambda x: -x[0])
+        top = items[:n_entry]
+        weight = sum(x[0] for x in items)
+        roads = [nm for x in top for nm in x[2]]
+        via = max(set(roads), key=roads.count) if roads else None
+        label = f"{COMPASS[sec]} approach" + (f" via {via}" if via else "")
+        pts = [node_xy(D, x[1]) for x in top]
+        out[label] = {"nodes": [x[1] for x in top], "share": weight / total if total else 0,
+                      "latlon": (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)),
+                      "auto": True}
+    return out
+
+
 def load_approaches(D, shares=None, n_entry=4, center_latlon=None):
     """Approach origins from the project's location_mapping.csv (fallback: built-in list or cardinal points)."""
     shares = dict(shares or DEFAULT_APPROACH_SHARE)
@@ -198,23 +242,17 @@ def load_approaches(D, shares=None, n_entry=4, center_latlon=None):
             if short in coords and short != "Uppal Metro Station":
                 coords[short] = (float(r["Latitude"]), float(r["Longitude"]))
 
-    # If center_latlon provided and far from Uppal, use cardinal approach corridors around center
-    if center_latlon is not None:
+    # The named Uppal approaches only make sense for the Uppal stadium itself.
+    # Any other venue gets approaches detected from its own road map.
+    if center_latlon is not None and haversine(center_latlon, STADIUM) > 300:
+        auto = auto_approaches(D, center_latlon, n_entry=n_entry)
+        if auto:
+            return auto
         clat, clon = center_latlon
-        # Check distance from Uppal Stadium
-        dist_from_uppal = math.hypot(clat - STADIUM[0], clon - STADIUM[1])
-        if dist_from_uppal > 0.05:  # more than ~5 km from Uppal
-            cardinal = {
-                "North Corridor": (clat + 0.022, clon),
-                "South Corridor": (clat - 0.022, clon),
-                "East Corridor": (clat, clon + 0.023),
-                "West Corridor": (clat, clon - 0.023),
-            }
-            out = {}
-            eq_share = 1.0 / len(cardinal)
-            for name, pt in cardinal.items():
-                out[name] = {"nodes": entry_nodes(D, pt, n_entry), "share": eq_share, "latlon": pt}
-            return out
+        cardinal = {"North Corridor": (clat + 0.022, clon), "South Corridor": (clat - 0.022, clon),
+                    "East Corridor": (clat, clon + 0.023), "West Corridor": (clat, clon - 0.023)}
+        return {name: {"nodes": entry_nodes(D, pt, n_entry), "share": 1.0 / len(cardinal), "latlon": pt}
+                for name, pt in cardinal.items()}
 
     tot = sum(shares.values()) or 1.0
     out = {}
@@ -509,7 +547,7 @@ def load_manual_locations(path=None) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def get_manual_hospital_and_parking(manual_df: pd.DataFrame | None = None) -> tuple[tuple[float, float] | None, list[tuple[float, float]] | None]:
+def get_manual_hospital_and_parking(manual_df: pd.DataFrame | None = None, near_latlon=None, max_km: float = 5.0) -> tuple[tuple[float, float] | None, list[tuple[float, float]] | None]:
     """Extract first hospital coordinate and all parking coordinates from manual locations.
     Returns (hospital_latlon, parking_latlons). Either may be None if not found."""
     if manual_df is None:
@@ -528,12 +566,18 @@ def get_manual_hospital_and_parking(manual_df: pd.DataFrame | None = None) -> tu
     # Filter hospital rows (case-insensitive)
     h_mask = manual_df[type_col].astype(str).str.strip().str.lower() == "hospital"
     h_df = manual_df[h_mask]
+    def _near(la, lo):
+        return near_latlon is None or haversine(near_latlon, (la, lo)) <= max_km * 1000
+
     hospital_latlon = None
-    if not h_df.empty:
+    for _, hr in h_df.iterrows():
         try:
-            hospital_latlon = (float(h_df.iloc[0][lat_col]), float(h_df.iloc[0][lon_col]))
+            la, lo = float(hr[lat_col]), float(hr[lon_col])
         except (ValueError, TypeError):
-            hospital_latlon = None
+            continue
+        if _near(la, lo):
+            hospital_latlon = (la, lo)
+            break
 
     # Filter parking rows (case-insensitive)
     p_mask = manual_df[type_col].astype(str).str.strip().str.lower() == "parking"
@@ -541,9 +585,11 @@ def get_manual_hospital_and_parking(manual_df: pd.DataFrame | None = None) -> tu
     parking_latlons = []
     for _, r in p_df.iterrows():
         try:
-            parking_latlons.append((float(r[lat_col]), float(r[lon_col])))
+            la, lo = float(r[lat_col]), float(r[lon_col])
         except (ValueError, TypeError):
             continue
+        if _near(la, lo):
+            parking_latlons.append((la, lo))
 
     return hospital_latlon, (parking_latlons if parking_latlons else None)
 
@@ -560,7 +606,7 @@ def run_scenario(D, params, pack=None):
     stadium = nearest_node(D, *venue_coords)
 
     # Read data/manual_locations.csv for hospital and parking zones
-    manual_hosp, manual_parking = get_manual_hospital_and_parking()
+    manual_hosp, manual_parking = get_manual_hospital_and_parking(near_latlon=venue_coords)
 
     # Destination zones: rows with Type = parking, else generated zones
     if manual_parking:
@@ -578,15 +624,18 @@ def run_scenario(D, params, pack=None):
     elif manual_hosp is not None:
         hospital_latlon = manual_hosp
         hospital_is_placeholder = False
+    elif haversine(venue_coords, STADIUM) <= 300:
+        hospital_latlon = FALLBACK_LOCATIONS["Habsiguda"]  # ASSUMED placeholder, Uppal demo only
+        hospital_is_placeholder = True
     else:
-        hospital_latlon = FALLBACK_LOCATIONS["Habsiguda"]  # ASSUMED placeholder hospital
+        hospital_latlon = None   # no hospital known near this venue: say so, do not invent one
         hospital_is_placeholder = True
     P["hospital_latlon"] = hospital_latlon
 
     approaches = load_approaches(D, P["approach_share"], center_latlon=venue_coords)
     dem = compute_demand(P["attendance"], P["mode_share"], P["start_time"], P["phase"], P["duration_h"], P["shift_pct"])
 
-    corridor = emergency_corridor(D, nearest_node(D, *hospital_latlon), stadium)
+    corridor = emergency_corridor(D, nearest_node(D, *hospital_latlon), stadium) if hospital_latlon else None
     if corridor:
         corridor["is_placeholder"] = hospital_is_placeholder
         corridor["tag"] = "E-1"

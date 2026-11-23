@@ -1,7 +1,7 @@
 """
 Tests for traffic_profiles.py:
 Verifies 24-hour diurnal and 7-day-a-week classified baseline traffic flow dataset
-based on HMDA CTS, Telangana RTA statistics, and IRC:106-1990 standards.
+synthetic assumed shape (not measured).
 """
 from pathlib import Path
 import sys

@@ -311,31 +311,33 @@ def geocode_custom_location(query: str) -> tuple[float, float, str] | None:
     return None
 
 
-def get_road_network_path(venue_key: str, lat: float | None = None, lon: float | None = None, dist_m: int = 3000) -> Path:
+def get_road_network_path(venue_key: str, lat: float | None = None, lon: float | None = None, dist_m: int = 3000,
+                          force_retry: bool = False) -> Path:
     """
-    Returns path to graphml for the given venue.
-    If cached in data/networks/<venue_key>.graphml, returns that.
-    If Uppal stadium, returns data/uppal_road_network.graphml.
-    If not yet cached, attempts download via OSMnx; if offline/fails, falls back to UPPAL_GRAPHML.
+    Path to the road graph for this venue (cached, or downloaded once with several Overpass mirrors).
+    Raises osm_download.NetworkUnavailable if the roads for THIS location cannot be obtained.
+    It never falls back to the Uppal network: a plan on the wrong roads is worse than no plan.
     """
-    NETWORKS_DIR.mkdir(parents=True, exist_ok=True)
-    if (venue_key in ("uppal_stadium", "uppal") or venue_key.startswith("uppal")) and UPPAL_GRAPHML.exists():
-        return UPPAL_GRAPHML
+    import osm_download
+    return osm_download.get_graph_for_venue(venue_key, lat, lon, dist_m, force_retry)
 
-    cached_file = NETWORKS_DIR / f"{venue_key}.graphml"
-    if cached_file.exists():
-        return cached_file
 
-    # Attempt download if coordinates provided
-    if lat is not None and lon is not None:
+def nearest_hospital(lat: float, lon: float, max_km: float = 12.0) -> dict[str, Any] | None:
+    """Closest hospital in data/hyderabad_hospitals.csv within max_km, else None (never invents one)."""
+    import math
+    df = load_hospitals()
+    if df.empty:
+        return None
+    best, best_d = None, None
+    for _, r in df.iterrows():
         try:
-            import osmnx as ox
-            print(f"Downloading road network for {venue_key} ({lat}, {lon}) within {dist_m}m...")
-            G = ox.graph_from_point((lat, lon), dist=dist_m, network_type="drive", simplify=True)
-            ox.save_graphml(G, filepath=cached_file)
-            return cached_file
-        except Exception as e:
-            print(f"OSM download failed for {venue_key} ({e}). Falling back to existing Uppal network.")
-
-    # Fallback to default Uppal road network
-    return UPPAL_GRAPHML
+            la, lo = float(r["Latitude"]), float(r["Longitude"])
+        except (TypeError, ValueError):
+            continue
+        d = math.hypot((la - lat) * 111.0, (lo - lon) * 111.0 * math.cos(math.radians(lat)))
+        if best_d is None or d < best_d:
+            best, best_d = r.to_dict(), d
+    if best is None or best_d > max_km:
+        return None
+    best["Distance_km"] = round(best_d, 1)
+    return best

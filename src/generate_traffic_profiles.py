@@ -1,17 +1,22 @@
 """
-Script to generate the comprehensive 24-hour, 7-day-a-week classified baseline traffic volume dataset
-for Greater Hyderabad roads based on HMDA CTS, Telangana RTA vehicle registration statistics, and IRC:106-1990.
+Generates a SYNTHETIC typical-day traffic pattern (24 hours x 7 days x 4 road categories).
+
+IMPORTANT: every number here (daily totals, day-of-week factors, hourly shares, vehicle mix) is an
+ASSUMED planning shape written by hand. It is NOT measured data and NOT taken from the HMDA
+Comprehensive Transportation Study or any other report. Use it only to show the SHAPE of a typical day.
+For real published counts see data/real_count_anchors.csv. Replace with police/ITMS counts when available.
 """
 import pandas as pd
 import numpy as np
 from pathlib import Path
 
+SOURCE_LABEL = "SYNTHETIC-ASSUMED (not measured)"
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_FILE = DATA_DIR / "hyderabad_hourly_traffic_profiles.csv"
 
 # Daily Average Traffic (ADT) by Road Category in Hyderabad (vehicles / 24 hours)
-# Source: HMDA Comprehensive Transportation Study (CTS) & LEA Associates Mobility Surveys
+# ASSUMED planning values (NOT from any survey). Real published anchors: data/real_count_anchors.csv
 ROAD_ADT = {
     "Trunk_Highway": 72000,       # e.g. NH-65, ORR feeder, Mumbai Hwy
     "Primary_Arterial": 48000,    # e.g. Inner Ring Road, Gachibowli Main Rd, Uppal-Secunderabad Rd
@@ -19,7 +24,7 @@ ROAD_ADT = {
     "Collector_Road": 12000       # e.g. Sector access, residential distributor
 }
 
-# Day of week volume factor relative to weekly average (HMDA CTS travel demand model)
+# ASSUMED day-of-week factors relative to weekly average (not measured)
 DAY_FACTORS = {
     "Monday": 1.02,
     "Tuesday": 1.00,
@@ -31,7 +36,7 @@ DAY_FACTORS = {
 }
 
 # 24-hour diurnal share profile (% of 24h traffic occurring in each 1-hour window)
-# Weekday vs Weekend (IRC:106-1990 & Hyderabad Traffic Survey benchmarks)
+# Weekday vs Weekend: ASSUMED shapes (not measured)
 WEEKDAY_HOURLY_SHARE = [
     0.008, 0.006, 0.005, 0.005, 0.008, 0.018,  # 00:00 - 05:00 (Late night / early dawn)
     0.038, 0.065, 0.088, 0.092, 0.075, 0.060,  # 06:00 - 11:00 (Morning Peak)
@@ -46,7 +51,7 @@ WEEKEND_HOURLY_SHARE = [
     0.095, 0.088, 0.068, 0.050, 0.035, 0.020   # 18:00 - 23:00 (High evening leisure)
 ]
 
-# Vehicle classification mix (Telangana RTA & HMDA modal split)
+# ASSUMED vehicle mix (not taken from RTA or HMDA)
 VEHICLE_MIX = {
     "Two_Wheeler": 0.52,   # PCU = 0.4
     "Car": 0.28,           # PCU = 1.0
@@ -115,7 +120,7 @@ def generate_profiles():
                     "Bus_Count": bus_count,
                     "LCV_Truck_Count": lcv_count,
                     "Peak_Status": "Peak Rush" if is_peak_window else "Off-Peak",
-                    "Source": "HMDA CTS / Telangana RTA / IRC:106-1990"
+                    "Source": SOURCE_LABEL
                 })
 
     df = pd.DataFrame(rows)

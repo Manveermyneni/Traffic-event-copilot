@@ -1,7 +1,7 @@
 """
 Traffic Profiles Module for Greater Hyderabad.
-Provides 24-hour diurnal and 7-day-a-week classified baseline traffic flow curves
-based on HMDA CTS (Comprehensive Transportation Study) and IRC:106-1990 standards.
+Provides a SYNTHETIC (assumed) 24-hour and 7-day typical-day pattern. It is a planning shape, not measured
+data. Real published counts live in data/real_count_anchors.csv (see load_real_anchors).
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 PROFILES_CSV = DATA_DIR / "hyderabad_hourly_traffic_profiles.csv"
+ANCHORS_CSV = DATA_DIR / "real_count_anchors.csv"
 
 
 def load_traffic_profiles() -> pd.DataFrame:
@@ -64,3 +65,8 @@ def get_weekly_comparison(hour: int = 19, road_category: str = "Primary_Arterial
     matches = df[(df["Hour"] == int(hour)) & (df["Road_Category"] == road_category)]
     return matches[["Day_Of_Week", "Time_Window", "Total_Vehicles", "Total_PCU", "Two_Wheeler_Count", "Car_Count", "Bus_Count"]].reset_index(drop=True)
 
+
+
+def load_real_anchors() -> pd.DataFrame:
+    """Real published traffic counts for Hyderabad (older studies, a handful of locations). Never extrapolated."""
+    return pd.read_csv(ANCHORS_CSV) if ANCHORS_CSV.exists() else pd.DataFrame()
